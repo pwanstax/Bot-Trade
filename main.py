@@ -269,15 +269,21 @@ def get_order(symbol: str, order_id: str):
 
 
 def place_stop_loss(symbol: str, side: str, sl_price: float):
-    exit_side = "SELL" if side == "LONG" else "BUY"
-    return get_client().futures_create_order(
-        symbol=symbol,
-        side=exit_side,
-        type="STOP_MARKET",
-        stopPrice=sl_price,
-        closePosition=True,
-        workingType="MARK_PRICE"
-    )
+    try:
+        exit_side = "SELL" if side == "LONG" else "BUY"
+        order = get_client().futures_create_order(
+            symbol=symbol,
+            side=exit_side,
+            type="STOP_MARKET",
+            stopPrice=sl_price,
+            closePosition=True,
+            workingType="MARK_PRICE"
+        )
+        print("place_stop_loss success:", order)
+        return order
+    except Exception as e:
+        print("place_stop_loss error:", str(e))
+        return {"error": str(e)}
 
 
 def place_native_tp_limits(symbol: str, side: str, tp_prices: list[float], tp_qtys: list[float]):
@@ -429,7 +435,7 @@ def webhook():
             return jsonify({"error": "quantity rounded to zero"}), 400
 
         opened_order = open_market_position(symbol, action, qty)
-        time.sleep(0.5)
+        time.sleep(1.5)
 
         actual_position = abs(get_position_amt(symbol))
         if actual_position <= 0:
@@ -448,8 +454,25 @@ def webhook():
         sl_order = place_stop_loss(symbol, side, sl)
         tp_orders = place_native_tp_limits(symbol, side, tps, tp_qtys)
 
-        if not tp_orders:
-            return jsonify({"error": "no TP orders placed"}), 500
+        print("opened_order =", opened_order)
+        print("sl_order =", sl_order)
+        print("tp_orders =", tp_orders)
+
+        if not sl_order or "orderId" not in sl_order:
+            return jsonify({
+                "error": "failed to place stop loss order",
+                "sl_order": sl_order,
+                "tp_orders": tp_orders,
+                "opened_order": opened_order
+            }), 500
+
+        if not tp_orders or "orderId" not in tp_orders[0]:
+            return jsonify({
+                "error": "failed to place tp orders",
+                "sl_order": sl_order,
+                "tp_orders": tp_orders,
+                "opened_order": opened_order
+            }), 500
 
         save_trade(
             symbol=symbol,
