@@ -217,6 +217,14 @@ def calc_entry_qty(symbol: str, usd_amount: float) -> float:
     qty = round_to_step(raw_qty, filters["step_size"])
     return qty
 
+def wait_for_position(symbol: str, timeout_sec: float = 8.0, poll_sec: float = 0.25) -> float:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        amt = abs(get_position_amt(symbol))
+        if amt > 0:
+            return amt
+        time.sleep(poll_sec)
+    return 0.0
 
 def open_market_position(symbol: str, action: str, qty: float):
     side = "BUY" if action == "buy" else "SELL"
@@ -303,8 +311,8 @@ def place_native_tp_limits(symbol: str, side: str, tp_prices: list[float], tp_qt
         if qty <= 0:
             continue
 
-        orders.append(
-            get_client().futures_create_order(
+        try:
+            order = get_client().futures_create_order(
                 symbol=symbol,
                 side=exit_side,
                 type="LIMIT",
@@ -313,7 +321,9 @@ def place_native_tp_limits(symbol: str, side: str, tp_prices: list[float], tp_qt
                 timeInForce="GTC",
                 reduceOnly=True
             )
-        )
+            orders.append(order)
+        except Exception as e:
+            print(f"place_native_tp_limits error for {price=} {qty=}: {e}")
 
     return orders
 
@@ -340,17 +350,14 @@ def move_sl_to_breakeven(symbol: str):
     if not is_active or breakeven_armed:
         return
 
-    # cancel old SL
     cancel_order(symbol, old_sl_order_id)
     time.sleep(0.3)
 
-    # get remaining live position size
     remaining_qty = abs(get_position_amt(symbol))
     if remaining_qty <= 0:
         mark_trade_inactive(symbol)
         return
 
-    # place new SL at entry
     new_sl_order = place_stop_loss(symbol, side, entry, remaining_qty)
 
     if not new_sl_order or "orderId" not in new_sl_order:
@@ -456,11 +463,13 @@ def webhook():
             return jsonify({"error": "quantity rounded to zero"}), 400
 
         opened_order = open_market_position(symbol, action, qty)
-        time.sleep(1.5)
 
-        actual_position = abs(get_position_amt(symbol))
+        actual_position = wait_for_position(symbol, timeout_sec=8.0, poll_sec=0.25)
         if actual_position <= 0:
-            return jsonify({"error": "position did not open"}), 400
+            return jsonify({
+                "error": "position did not become visible after market entry",
+                "opened_order": opened_order
+            }), 400
 
         side = "LONG" if action == "buy" else "SHORT"
 
@@ -472,7 +481,11 @@ def webhook():
         if leftover > 0:
             tp_qtys[-1] = round_to_step(tp_qtys[-1] + leftover, filters["step_size"])
 
-        sl_order = place_stop_loss(symbol, side, sl)
+        print("actual_position =", actual_position)
+        print("tp_qtys =", tp_qtys)
+        print("tps =", tps)
+
+        sl_order = place_stop_loss(symbol, side, sl, actual_position)
         tp_orders = place_native_tp_limits(symbol, side, tps, tp_qtys)
 
         print("opened_order =", opened_order)
@@ -484,7 +497,8 @@ def webhook():
                 "error": "failed to place stop loss order",
                 "sl_order": sl_order,
                 "tp_orders": tp_orders,
-                "opened_order": opened_order
+                "opened_order": opened_order,
+                "actual_position": actual_position
             }), 500
 
         if not tp_orders or "orderId" not in tp_orders[0]:
@@ -492,7 +506,8 @@ def webhook():
                 "error": "failed to place tp orders",
                 "sl_order": sl_order,
                 "tp_orders": tp_orders,
-                "opened_order": opened_order
+                "opened_order": opened_order,
+                "actual_position": actual_position
             }), 500
 
         save_trade(
