@@ -35,7 +35,7 @@ app = Flask(__name__)
 
 client = Client(API_KEY, API_SECRET, testnet=USE_TESTNET)
 if USE_TESTNET:
-    client.FUTURES_URL = "https://testnet.binancefuture.com/fapi"
+    client.FUTURES_URL = "https://demo-fapi.binance.com"
 
 db_lock = threading.Lock()
 
