@@ -505,7 +505,8 @@ def health():
 # =========================
 # STARTUP
 # =========================
+init_db()
+start_breakeven_worker()
+
 if __name__ == "__main__":
-    init_db()
-    start_breakeven_worker()
     app.run(host="0.0.0.0", port=PORT, debug=False)
