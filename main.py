@@ -369,6 +369,8 @@ def move_sl_to_breakeven(symbol: str):
 
 
 def breakeven_worker():
+    print("[BE] Worker started")
+
     while True:
         try:
             rows = db_fetchall("""
@@ -377,29 +379,41 @@ def breakeven_worker():
                 WHERE is_active = 1
             """)
 
+            print(f"[BE] Active trades: {len(rows)}")
+
             for row in rows:
                 symbol = row["symbol"]
                 tp1_order_id = row["tp1_order_id"]
                 breakeven_armed = int(row["breakeven_armed"])
 
                 if breakeven_armed:
+                    print(f"[BE] {symbol} already moved to breakeven → skip")
                     continue
 
-                # Position already fully closed
+                print(f"[BE] Checking {symbol} TP1={tp1_order_id}")
+
+                # Check position still exists
                 pos_amt = get_position_amt(symbol)
                 if pos_amt == 0:
+                    print(f"[BE] {symbol} position closed → marking inactive")
                     mark_trade_inactive(symbol)
                     continue
 
                 try:
                     order = get_order(symbol, tp1_order_id)
-                    if order["status"] == "FILLED":
+                    status = order.get("status")
+
+                    print(f"[BE] {symbol} TP1 status = {status}")
+
+                    if status == "FILLED":
+                        print(f"[BE] {symbol} TP1 FILLED → moving SL to breakeven")
                         move_sl_to_breakeven(symbol)
+
                 except Exception as e:
-                    print(f"[breakeven_worker] failed checking TP1 for {symbol}: {e}")
+                    print(f"[BE] ERROR checking TP1 for {symbol}: {e}")
 
         except Exception as e:
-            print(f"[breakeven_worker] error: {e}")
+            print(f"[BE] WORKER ERROR: {e}")
 
         time.sleep(2)
 
