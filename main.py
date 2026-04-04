@@ -33,9 +33,16 @@ USE_TESTNET = os.environ.get("USE_TESTNET", "true").lower() == "true"
 # =========================
 app = Flask(__name__)
 
-client = Client(API_KEY, API_SECRET, testnet=USE_TESTNET)
-if USE_TESTNET:
-    client.FUTURES_URL = "https://demo-fapi.binance.com"
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        c = Client(API_KEY, API_SECRET, testnet=USE_TESTNET)
+        if USE_TESTNET:
+            c.FUTURES_URL = "https://demo-fapi.binance.com"
+        _client = c
+    return _client
 
 db_lock = threading.Lock()
 
@@ -153,7 +160,7 @@ def update_trade_sl(symbol, new_sl, new_sl_order_id, breakeven_armed=True):
 # BINANCE HELPERS
 # =========================
 def get_symbol_filters(symbol: str):
-    info = client.futures_exchange_info()
+    info = get_client().futures_exchange_info()
     for s in info["symbols"]:
         if s["symbol"] == symbol:
             step_size = None
@@ -185,11 +192,11 @@ def round_price(value: float, tick: Decimal) -> float:
 
 
 def get_mark_price(symbol: str) -> float:
-    return float(client.futures_mark_price(symbol=symbol)["markPrice"])
+    return float(get_client().futures_mark_price(symbol=symbol)["markPrice"])
 
 
 def get_position_amt(symbol: str) -> float:
-    positions = client.futures_position_information(symbol=symbol)
+    positions = get_client().futures_position_information(symbol=symbol)
     for pos in positions:
         amt = float(pos["positionAmt"])
         if amt != 0:
@@ -198,7 +205,7 @@ def get_position_amt(symbol: str) -> float:
 
 
 def set_leverage(symbol: str, leverage: int):
-    return client.futures_change_leverage(symbol=symbol, leverage=leverage)
+    return get_client().futures_change_leverage(symbol=symbol, leverage=leverage)
 
 
 def calc_entry_qty(symbol: str, usd_amount: float) -> float:
@@ -213,7 +220,7 @@ def calc_entry_qty(symbol: str, usd_amount: float) -> float:
 
 def open_market_position(symbol: str, action: str, qty: float):
     side = "BUY" if action == "buy" else "SELL"
-    return client.futures_create_order(
+    return get_client().futures_create_order(
         symbol=symbol,
         side=side,
         type="MARKET",
@@ -234,7 +241,7 @@ def close_position_market(symbol: str):
     if qty <= 0:
         return None
 
-    return client.futures_create_order(
+    return get_client().futures_create_order(
         symbol=symbol,
         side=side,
         type="MARKET",
@@ -245,25 +252,25 @@ def close_position_market(symbol: str):
 
 def cancel_open_orders(symbol: str):
     try:
-        return client.futures_cancel_all_open_orders(symbol=symbol)
+        return get_client().futures_cancel_all_open_orders(symbol=symbol)
     except Exception:
         return None
 
 
 def cancel_order(symbol: str, order_id: str):
     try:
-        return client.futures_cancel_order(symbol=symbol, orderId=order_id)
+        return get_client().futures_cancel_order(symbol=symbol, orderId=order_id)
     except Exception:
         return None
 
 
 def get_order(symbol: str, order_id: str):
-    return client.futures_get_order(symbol=symbol, orderId=order_id)
+    return get_client().futures_get_order(symbol=symbol, orderId=order_id)
 
 
 def place_stop_loss(symbol: str, side: str, sl_price: float):
     exit_side = "SELL" if side == "LONG" else "BUY"
-    return client.futures_create_order(
+    return get_client().futures_create_order(
         symbol=symbol,
         side=exit_side,
         type="STOP_MARKET",
@@ -282,7 +289,7 @@ def place_native_tp_limits(symbol: str, side: str, tp_prices: list[float], tp_qt
             continue
 
         orders.append(
-            client.futures_create_order(
+            get_client().futures_create_order(
                 symbol=symbol,
                 side=exit_side,
                 type="LIMIT",
