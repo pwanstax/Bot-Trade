@@ -268,15 +268,24 @@ def get_order(symbol: str, order_id: str):
     return get_client().futures_get_order(symbol=symbol, orderId=order_id)
 
 
-def place_stop_loss(symbol: str, side: str, sl_price: float):
+def place_stop_loss(symbol: str, side: str, sl_price: float, qty: float):
     try:
         exit_side = "SELL" if side == "LONG" else "BUY"
+
+        filters = get_symbol_filters(symbol)
+        qty = round_to_step(qty, filters["step_size"])
+        sl_price = round_price(sl_price, filters["tick_size"])
+
+        if qty <= 0:
+            raise ValueError("SL quantity rounded to zero")
+
         order = get_client().futures_create_order(
             symbol=symbol,
             side=exit_side,
             type="STOP_MARKET",
             stopPrice=sl_price,
-            closePosition=True,
+            quantity=qty,
+            reduceOnly=True,
             workingType="MARK_PRICE"
         )
         print("place_stop_loss success:", order)
@@ -331,12 +340,24 @@ def move_sl_to_breakeven(symbol: str):
     if not is_active or breakeven_armed:
         return
 
+    # cancel old SL
     cancel_order(symbol, old_sl_order_id)
     time.sleep(0.3)
 
-    new_sl_order = place_stop_loss(symbol, side, entry)
-    update_trade_sl(symbol, entry, new_sl_order["orderId"], breakeven_armed=True)
+    # get remaining live position size
+    remaining_qty = abs(get_position_amt(symbol))
+    if remaining_qty <= 0:
+        mark_trade_inactive(symbol)
+        return
 
+    # place new SL at entry
+    new_sl_order = place_stop_loss(symbol, side, entry, remaining_qty)
+
+    if not new_sl_order or "orderId" not in new_sl_order:
+        print(f"[breakeven] failed to place new SL for {symbol}: {new_sl_order}")
+        return
+
+    update_trade_sl(symbol, entry, new_sl_order["orderId"], breakeven_armed=True)
     print(f"[breakeven] {symbol} moved SL to entry {entry}")
 
 
