@@ -1,4 +1,3 @@
-from asyncio.windows_events import NULL
 import os
 import time
 import sqlite3
@@ -502,7 +501,6 @@ def webhook():
             round_price(tp5, filters["tick_size"]),
         ]
 
-        leverage = int(data.get("leverage", LEVERAGE))
         set_leverage(symbol, leverage)
 
         cancel_open_orders(symbol)
@@ -541,6 +539,12 @@ def webhook():
         print("tps =", tps)
 
         sl_order = place_stop_loss(symbol, side, sl, actual_position)
+
+        if not sl_order or "error" in sl_order:
+            return jsonify({
+                "error": "SL placement failed",
+                "details": sl_order
+            }), 500
         tp_orders = place_native_tp_limits(symbol, side, tps, tp_qtys)
 
         print("opened_order =", opened_order)
@@ -558,7 +562,7 @@ def webhook():
                 "actual_position": actual_position
             }), 500
 
-        if not tp_orders or "orderId" not in tp_orders[0]:
+        if not tp_orders or any("orderId" not in o for o in tp_orders):
             return jsonify({
                 "error": "failed to place tp orders",
                 "sl_order": sl_order,
