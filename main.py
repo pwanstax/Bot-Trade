@@ -24,7 +24,7 @@ MIN_NOTIONAL = float(os.environ.get("MIN_NOTIONAL", "100"))
 MIN_NOTIONAL_BUFFER = float(os.environ.get("MIN_NOTIONAL_BUFFER", "1.02"))
 LEVERAGE = int(os.environ.get("LEVERAGE", "5"))
 
-TP_SPLITS = [0.20, 0.20, 0.20, 0.20, 0.20]
+DEFAULT_TP_SPLITS = [0.40, 0.25, 0.15, 0.10, 0.10]
 
 USE_TESTNET = os.environ.get("USE_TESTNET", "true").lower() == "true"
 
@@ -578,6 +578,23 @@ def webhook():
             "received": data
         }), 500
 
+
+def parse_tp_splits(data: dict) -> list[float]:
+    raw = [
+        float(data.get("tp_split1", DEFAULT_TP_SPLITS[0])),
+        float(data.get("tp_split2", DEFAULT_TP_SPLITS[1])),
+        float(data.get("tp_split3", DEFAULT_TP_SPLITS[2])),
+        float(data.get("tp_split4", DEFAULT_TP_SPLITS[3])),
+        float(data.get("tp_split5", DEFAULT_TP_SPLITS[4])),
+    ]
+
+    total = sum(raw)
+    if total <= 0:
+        raise ValueError("TP splits sum must be > 0")
+
+    # normalize to exactly 1.0 in case user sends 99% or 101%
+    normalized = [x / total for x in raw]
+    return normalized
 
 @app.route("/status", methods=["GET"])
 def status():
