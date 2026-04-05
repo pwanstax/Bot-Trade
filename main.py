@@ -1,3 +1,4 @@
+from asyncio.windows_events import NULL
 import os
 import time
 import sqlite3
@@ -444,6 +445,23 @@ def start_breakeven_worker():
     return t
 
 
+def parse_tp_splits(data: dict) -> list[float]:
+    raw = [
+        float(data.get("tp_split1", DEFAULT_TP_SPLITS[0])),
+        float(data.get("tp_split2", DEFAULT_TP_SPLITS[1])),
+        float(data.get("tp_split3", DEFAULT_TP_SPLITS[2])),
+        float(data.get("tp_split4", DEFAULT_TP_SPLITS[3])),
+        float(data.get("tp_split5", DEFAULT_TP_SPLITS[4])),
+    ]
+
+    total = sum(raw)
+    if total <= 0:
+        raise ValueError("TP splits sum must be > 0")
+
+    # normalize to exactly 1.0 in case user sends 99% or 101%
+    normalized = [x / total for x in raw]
+    return normalized
+
 # =========================
 # ROUTES
 # =========================
@@ -466,6 +484,9 @@ def webhook():
         tp4 = float(data["tp4"])
         tp5 = float(data["tp5"])
 
+        leverage = int(data.get("leverage", LEVERAGE))
+        tp_splits = parse_tp_splits(data)
+
         if action not in ("buy", "sell"):
             return jsonify({"error": "invalid action"}), 400
 
@@ -481,7 +502,8 @@ def webhook():
             round_price(tp5, filters["tick_size"]),
         ]
 
-        set_leverage(symbol, LEVERAGE)
+        leverage = int(data.get("leverage", LEVERAGE))
+        set_leverage(symbol, leverage)
 
         cancel_open_orders(symbol)
         close_position_market(symbol)
@@ -506,7 +528,7 @@ def webhook():
 
         side = "LONG" if action == "buy" else "SHORT"
 
-        tp_qtys = [actual_position * p for p in TP_SPLITS]
+        tp_qtys = [actual_position * p for p in tp_splits]
         tp_qtys = [round_to_step(x, filters["step_size"]) for x in tp_qtys]
 
         rounded_sum = sum(tp_qtys)
@@ -567,6 +589,8 @@ def webhook():
                 "sl": sl,
                 "tps": tps,
                 "tp_qtys": tp_qtys,
+                "tp_splits": tp_splits,
+                "leverage": leverage,
                 "breakeven_after": "TP1"
             }
         })
@@ -578,23 +602,6 @@ def webhook():
             "received": data
         }), 500
 
-
-def parse_tp_splits(data: dict) -> list[float]:
-    raw = [
-        float(data.get("tp_split1", DEFAULT_TP_SPLITS[0])),
-        float(data.get("tp_split2", DEFAULT_TP_SPLITS[1])),
-        float(data.get("tp_split3", DEFAULT_TP_SPLITS[2])),
-        float(data.get("tp_split4", DEFAULT_TP_SPLITS[3])),
-        float(data.get("tp_split5", DEFAULT_TP_SPLITS[4])),
-    ]
-
-    total = sum(raw)
-    if total <= 0:
-        raise ValueError("TP splits sum must be > 0")
-
-    # normalize to exactly 1.0 in case user sends 99% or 101%
-    normalized = [x / total for x in raw]
-    return normalized
 
 @app.route("/status", methods=["GET"])
 def status():
