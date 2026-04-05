@@ -217,6 +217,7 @@ def calc_entry_qty(symbol: str, usd_amount: float) -> float:
     qty = round_to_step(raw_qty, filters["step_size"])
     return qty
 
+
 def wait_for_position(symbol: str, timeout_sec: float = 8.0, poll_sec: float = 0.25) -> float:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -225,6 +226,7 @@ def wait_for_position(symbol: str, timeout_sec: float = 8.0, poll_sec: float = 0
             return amt
         time.sleep(poll_sec)
     return 0.0
+
 
 def open_market_position(symbol: str, action: str, qty: float):
     side = "BUY" if action == "buy" else "SELL"
@@ -269,6 +271,19 @@ def cancel_order(symbol: str, order_id: str):
     try:
         return get_client().futures_cancel_order(symbol=symbol, orderId=order_id)
     except Exception:
+        return None
+
+
+def cancel_algo_order(algo_id: str):
+    try:
+        return get_client()._request_futures_api(
+            "delete",
+            "algoOrder",
+            True,
+            data={"algoId": str(algo_id)}
+        )
+    except Exception as e:
+        print(f"cancel_algo_order error: {e}")
         return None
 
 
@@ -350,7 +365,13 @@ def move_sl_to_breakeven(symbol: str):
     if not is_active or breakeven_armed:
         return
 
-    cancel_order(symbol, old_sl_order_id)
+    canceled = cancel_order(symbol, old_sl_order_id)
+    if not canceled:
+        canceled = cancel_algo_order(old_sl_order_id)
+        print(f"[BE] cancel old SL as algoId={old_sl_order_id} -> {canceled}")
+    else:
+        print(f"[BE] cancel old SL as orderId={old_sl_order_id} -> {canceled}")
+
     time.sleep(0.3)
 
     remaining_qty = abs(get_position_amt(symbol))
@@ -360,11 +381,12 @@ def move_sl_to_breakeven(symbol: str):
 
     new_sl_order = place_stop_loss(symbol, side, entry, remaining_qty)
 
-    if not new_sl_order or "orderId" not in new_sl_order:
+    new_sl_order_id = new_sl_order.get("orderId") or new_sl_order.get("algoId")
+    if not new_sl_order or not new_sl_order_id:
         print(f"[breakeven] failed to place new SL for {symbol}: {new_sl_order}")
         return
 
-    update_trade_sl(symbol, entry, new_sl_order["orderId"], breakeven_armed=True)
+    update_trade_sl(symbol, entry, new_sl_order_id, breakeven_armed=True)
     print(f"[breakeven] {symbol} moved SL to entry {entry}")
 
 
@@ -387,26 +409,24 @@ def breakeven_worker():
                 breakeven_armed = int(row["breakeven_armed"])
 
                 if breakeven_armed:
-                    print(f"[BE] {symbol} already moved to breakeven → skip")
+                    print(f"[BE] {symbol} already moved to breakeven -> skip")
                     continue
 
                 print(f"[BE] Checking {symbol} TP1={tp1_order_id}")
 
-                # Check position still exists
                 pos_amt = get_position_amt(symbol)
                 if pos_amt == 0:
-                    print(f"[BE] {symbol} position closed → marking inactive")
+                    print(f"[BE] {symbol} position closed -> marking inactive")
                     mark_trade_inactive(symbol)
                     continue
 
                 try:
                     order = get_order(symbol, tp1_order_id)
                     status = order.get("status")
-
                     print(f"[BE] {symbol} TP1 status = {status}")
 
                     if status == "FILLED":
-                        print(f"[BE] {symbol} TP1 FILLED → moving SL to breakeven")
+                        print(f"[BE] {symbol} TP1 FILLED -> moving SL to breakeven")
                         move_sl_to_breakeven(symbol)
 
                 except Exception as e:
@@ -463,7 +483,6 @@ def webhook():
 
         set_leverage(symbol, LEVERAGE)
 
-        # Always close old position and cancel old orders first
         cancel_open_orders(symbol)
         close_position_market(symbol)
         time.sleep(0.8)
@@ -506,7 +525,9 @@ def webhook():
         print("sl_order =", sl_order)
         print("tp_orders =", tp_orders)
 
-        if not sl_order or "orderId" not in sl_order:
+        sl_order_id = sl_order.get("orderId") or sl_order.get("algoId")
+
+        if not sl_order or not sl_order_id:
             return jsonify({
                 "error": "failed to place stop loss order",
                 "sl_order": sl_order,
@@ -531,7 +552,7 @@ def webhook():
             initial_sl=sl,
             tp1_price=tps[0],
             tp1_order_id=tp_orders[0]["orderId"],
-            sl_order_id=sl_order["orderId"],
+            sl_order_id=str(sl_order_id),
         )
 
         return jsonify({
